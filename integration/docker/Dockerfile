@@ -47,6 +47,11 @@ RUN if [ ${ENABLE_DYNAMIC_USER} = "true" ] ; then \
 
 # Configure Java
 FROM centos:7 as build_java8
+
+RUN sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-* \
+    && sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-* \
+    && yum clean all && yum makecache
+
 RUN \
     yum update -y && yum upgrade -y && \
     yum install -y java-1.8.0-openjdk-devel java-1.8.0-openjdk && \
@@ -60,7 +65,6 @@ FROM centos:7 as build_java11
 RUN sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-* \
     && sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-* \
     && yum clean all && yum makecache
-
 
 RUN \
     yum update -y && yum upgrade -y && \
