@@ -9,7 +9,7 @@
 # See the NOTICE file distributed with this work for information regarding copyright ownership.
 #
 
-FROM alluxio/alluxio:2.9.0-SNAPSHOT
+FROM registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio/alluxio:2025-11-19-10-45-15
 
 USER root
 
