@@ -13,6 +13,11 @@ FROM alluxio/alluxio:2.9.0-SNAPSHOT
 
 USER root
 
+RUN sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-* \
+    && sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-* \
+    && yum clean all && yum makecache
+
+
 RUN \
     yum update -y && yum upgrade -y && \
     yum install -y java-11-openjdk-devel java-11-openjdk && \

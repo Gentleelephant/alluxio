@@ -30,7 +30,7 @@ RUN cd /alluxio-csi && \
 #   See - https://github.com/moby/moby/issues/35525
 FROM alpine:3.10.2 AS alluxio-extractor
 # Note that downloads for *-SNAPSHOT tarballs are not available.
-ARG ALLUXIO_TARBALL=http://downloads.alluxio.io/downloads/files/2.9.0-SNAPSHOT/alluxio-2.9.0-SNAPSHOT-bin.tar.gz
+ARG ALLUXIO_TARBALL=http://downloads.alluxio.io/downloads/files/2.9.0/alluxio-2.9.0-bin.tar.gz
 # (Alert):It's not recommended to set this Argument to true, unless you know exactly what you are doing
 ARG ENABLE_DYNAMIC_USER=false
 
@@ -56,6 +56,12 @@ ENV JAVA_HOME /usr/lib/jvm/java-1.8.0-openjdk
 RUN echo "networkaddress.cache.ttl=0" >> /usr/lib/jvm/java-1.8.0-openjdk/jre/lib/security/java.security
 
 FROM centos:7 as build_java11
+
+RUN sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-* \
+    && sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-* \
+    && yum clean all && yum makecache
+
+
 RUN \
     yum update -y && yum upgrade -y && \
     yum install -y java-11-openjdk-devel java-11-openjdk && \
