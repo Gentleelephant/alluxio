@@ -91,7 +91,6 @@ RUN \
     make install && \
     cd .. && \
     rm -rf libfuse && \
-    yum remove -y gcc gcc-c++ make cmake gettext-devel libtool autoconf wget git && \
     yum install -y fuse3 fuse3-devel fuse3-lib && \
     yum clean all
 
@@ -114,7 +113,8 @@ ARG ENABLE_DYNAMIC_USER=true
 # Add Tini for Alluxio helm charts (https://github.com/Alluxio/alluxio/pull/12233)
 # - https://github.com/krallin/tini
 ENV TINI_VERSION v0.18.0
-ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static /usr/local/bin/tini
+ARG TARGETARCH
+ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static-${TARGETARCH} /usr/local/bin/tini
 RUN chmod +x /usr/local/bin/tini
 
 # If Alluxio user, group, gid, and uid aren't root|0, create the alluxio user and set file permissions accordingly
@@ -138,6 +138,21 @@ COPY --from=alluxio-extractor --chown=${ALLUXIO_USERNAME}:${ALLUXIO_GROUP} /opt 
 COPY --chown=${ALLUXIO_USERNAME}:${ALLUXIO_GROUP} conf /opt/alluxio/conf/
 COPY --chown=${ALLUXIO_USERNAME}:${ALLUXIO_GROUP} entrypoint.sh /
 COPY --from=csi-dev /usr/local/bin/alluxio-csi /usr/local/bin/
+
+# Compile JNI FUSE native libraries from source for multi-arch support
+# The pre-compiled libraries in the tarball are x86-64 only
+RUN if [ -d /opt/alluxio/integration/jnifuse/native/src/main/native/libjnifuse ]; then \
+        yum install -y gcc-c++ make fuse-devel fuse3-devel && \
+        cd /opt/alluxio/integration/jnifuse/native/src/main/native/libjnifuse && \
+        make OUTPUT_DIR=/tmp/jnifuse && \
+        cp /tmp/jnifuse/libjnifuse.so /opt/alluxio/lib/ 2>/dev/null || true && \
+        cp /tmp/jnifuse/libjnifuse3.so /opt/alluxio/lib/ 2>/dev/null || true && \
+        cp /tmp/jnifuse/libjnifuse.so /opt/alluxio/integration/jnifuse/native/src/main/resources/ 2>/dev/null || true && \
+        cp /tmp/jnifuse/libjnifuse3.so /opt/alluxio/integration/jnifuse/native/src/main/resources/ 2>/dev/null || true && \
+        rm -rf /tmp/jnifuse && \
+        yum remove -y gcc-c++ make && \
+        yum clean all; \
+    fi
 
 RUN if [ ${ENABLE_DYNAMIC_USER} = "true" ] ; then \
        chmod -R 777 /journal; \

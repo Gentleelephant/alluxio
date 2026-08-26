@@ -21,31 +21,34 @@ GIT_TREE_STATE=$(shell echo "clean")
 GIT_SHA=$(shell git rev-parse --short HEAD || echo "HEAD")
 GIT_VERSION=v0.1.0-${GIT_SHA}
 
+# Architecture detection - can be overridden with GOARCH=arm64 make ...
+GOARCH ?= $(shell go env GOARCH)
+
 all: manager
 
 # Run tests
 test: generate fmt vet manifests
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test ./... -coverprofile cover.out
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go test ./... -coverprofile cover.out
 
 # Build manager binary
 manager: generate fmt vet
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build  -o bin/manager cmd/controller/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go build  -o bin/manager cmd/controller/main.go
 
 # Build webhook
 webhook: generate fmt vet
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build  -o bin/webhook cmd/webhook/*.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go build  -o bin/webhook cmd/webhook/*.go
 
 # Run against the configured Kubernetes cluster in ~/.kube/config, add debug
 run: generate fmt vet manifests
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go run -gcflags "all=-N -l" cmd/controller/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go run -gcflags "all=-N -l" cmd/controller/main.go
 
 # Run against the configured Kubernetes cluster in ~/.kube/config, add debug
 runwebhook: generate fmt vet manifests
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go run -gcflags "all=-N -l" cmd/webhook/*.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) go run -gcflags "all=-N -l" cmd/webhook/*.go
 
 # Debug against the configured Kubernetes cluster in ~/.kube/config, add debug
 debug: generate fmt vet manifests
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 dlv debug --headless --listen ":12345" --log --api-version=2 cmd/controller/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=$(GOARCH) dlv debug --headless --listen ":12345" --log --api-version=2 cmd/controller/main.go
 
 # Install CRDs into a cluster
 install: manifests

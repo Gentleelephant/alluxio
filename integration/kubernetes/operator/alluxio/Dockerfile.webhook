@@ -1,12 +1,14 @@
 # Build the webhook binary
 FROM golang:1.14.2 as builder
 
+ARG TARGETARCH
+ARG TARGETOS
+
 WORKDIR /go/src/github.com/Alluxio/alluxio
 COPY . .
 
 # Build
-# RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -a -o webhook main.go
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=off go build -a -o /go/bin/alluxio-webhook cmd/webhook/*.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=off go build -a -o /go/bin/alluxio-webhook cmd/webhook/*.go
 
 
 # Use distroless as minimal base image to package the webhook binary

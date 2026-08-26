@@ -11,7 +11,9 @@ COPY . .
 
 RUN go get github.com/go-delve/delve/cmd/dlv
 
-ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=off
+ARG TARGETARCH
+ARG TARGETOS
+ENV CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=off
 
 CMD ["dlv", "debug", "--headless", "--listen", "':12345'", "--log", "--api-version=2", "cmd/controller/main.go"]
 
