@@ -21,8 +21,19 @@ RUN sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-* \
 RUN \
     yum update -y && yum upgrade -y && \
     yum install -y java-11-openjdk-devel java-11-openjdk && \
-    yum install -y ca-certificates pkgconfig wget udev git gcc gcc-c++ make cmake gettext-devel libtool autoconf unzip vim && \
+    yum install -y ca-certificates pkgconfig wget udev git gcc gcc-c++ make cmake gettext-devel libtool autoconf unzip vim fuse-devel fuse3-devel && \
     yum clean all
+
+# Compile JNI FUSE native libraries from source for multi-arch support
+RUN if [ -d /opt/alluxio/integration/jnifuse/native/src/main/native/libjnifuse ]; then \
+        cd /opt/alluxio/integration/jnifuse/native/src/main/native/libjnifuse && \
+        make OUTPUT_DIR=/tmp/jnifuse && \
+        cp /tmp/jnifuse/libjnifuse.so /opt/alluxio/lib/ 2>/dev/null || true && \
+        cp /tmp/jnifuse/libjnifuse3.so /opt/alluxio/lib/ 2>/dev/null || true && \
+        cp /tmp/jnifuse/libjnifuse.so /opt/alluxio/integration/jnifuse/native/src/main/resources/ 2>/dev/null || true && \
+        cp /tmp/jnifuse/libjnifuse3.so /opt/alluxio/integration/jnifuse/native/src/main/resources/ 2>/dev/null || true && \
+        rm -rf /tmp/jnifuse; \
+    fi
 
 # Create a symlink for setting JAVA_HOME depending on java version. ENV cannot be set conditionally.
 RUN ln -s /usr/lib/jvm/java-1.8.0-openjdk /usr/lib/jvm/java-8-openjdk
