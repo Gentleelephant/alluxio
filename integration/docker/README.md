@@ -24,56 +24,26 @@ Docker image that only installs packages needed for Alluxio service to run, this
 more development tools, including gcc, make, async-profiler, etc., making it easier to deploy more 
 services along with Alluxio.
 
-The development image is a target of the same Dockerfile as the production image. This guarantees
-that master, worker, CSI, and FUSE use the same architecture-correct runtime while retaining Java
-8/11, GCC/G++, Make, CMake, Git, Vim, Arthas, and async-profiler. To build it, run
-```console
-$ docker build -t alluxio/alluxio-dev -f integration/docker/Dockerfile --target dev .
-```
+`Dockerfile-dev` extends the pinned multi-architecture alluxio-dev base image without reinstalling
+or removing its packages. BuildKit compiles and embeds JNI FUSE independently for each requested
+platform, replaces architecture-sensitive tini and async-profiler binaries, and runs the complete
+native-image self-test before the image can be published.
 
-To build with a local Alluxio tarball, specify the `ALLUXIO_TARBALL` build argument
-
-```console
-$ docker build -t alluxio/alluxio-dev -f integration/docker/Dockerfile --target dev \
-  --build-arg ALLUXIO_TARBALL=alluxio-${version}.tar.gz .
-```
-
-Development image also has Java11 installed. To run Alluxio with Java11, build development image 
-with the `JAVA_VERSION` build argument specified.
-
-```console
-$ docker build -t alluxio/alluxio-dev -f integration/docker/Dockerfile --target dev \
-  --build-arg ALLUXIO_TARBALL=alluxio-${version}.tar.gz \
-  --build-arg JAVA_VERSION=11 .
-```
-
-To publish one tag for both supported CPU architectures, use Buildx. BuildKit executes the JNI
-FUSE compilation independently in each target platform and publishes a manifest list containing
-the two resulting images.
+Run the build from the repository root. No build arguments or separate verification command are required:
 
 ```console
 $ docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -f integration/docker/Dockerfile \
-  --target dev \
-  -t registry.example.com/alluxio/alluxio-dev:${version} \
+  -f integration/docker/Dockerfile-dev \
+  -t registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio-dev:2.9.0-fix.2 \
   --push .
 ```
 
-After publishing, verify the manifest, development tools, native binaries, JAR fallback, and
-external JNI loading on both platforms:
+For an optional post-publication audit of the manifest and both runnable images, use
+`integration/docker/tests/verify-multiarch-dev-image.sh <image>`.
 
-```console
-$ integration/docker/tests/verify-multiarch-dev-image.sh \
-  registry.example.com/alluxio/alluxio-dev:${version}
-```
-
-If an existing customized `alluxio-dev` image already contains required internal tools or
-configuration, use `Dockerfile-dev` to preserve its packages, Java selection, Arthas, entrypoint,
-user, and Alluxio files. This compatibility build replaces only the architecture-bound JNI FUSE
-libraries, the copies embedded in the FUSE JAR, tini, and async-profiler. The base image must
-already publish both platforms, and its CSI binary must already match each platform; the verifier
-below rejects the result otherwise.
+The default base is pinned to the tested multi-architecture `2.9.0-fix.1` manifest. Override it
+only when intentionally rebasing the compatibility image:
 
 ```console
 $ docker buildx build \
@@ -82,22 +52,6 @@ $ docker buildx build \
   --build-arg ALLUXIO_BASE_IMAGE=registry.example.com/alluxio/alluxio-dev:${old-version} \
   -t registry.example.com/alluxio/alluxio-dev:${new-version} \
   --push .
-```
-
-For the current customized image, run the build from the repository root:
-
-```console
-$ docker buildx create --name alluxio-multiarch --driver docker-container --use
-$ docker buildx inspect --bootstrap
-$ docker login registry.cn-hangzhou.aliyuncs.com
-$ docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  -f integration/docker/Dockerfile-dev \
-  --build-arg ALLUXIO_BASE_IMAGE=registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio-dev:2.9.0-fix.1 \
-  -t registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio-dev:2.9.0-fix.2 \
-  --push .
-$ integration/docker/tests/verify-multiarch-dev-image.sh \
-  registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio-dev:2.9.0-fix.2
 ```
 
 The two download base URLs can be redirected to an internal mirror when the builder cannot access
@@ -127,7 +81,7 @@ $ docker build -t alluxio/alluxio:customizedUser \
 ```
 
 Use the same arguments with the `dev` target to create a development image with a customized
-user. The compatibility `Dockerfile-dev` requires `ALLUXIO_BASE_IMAGE` explicitly.
+user. The compatibility `Dockerfile-dev` intentionally preserves the user from its base image.
 
 ```console
 $ docker build -t alluxio/alluxio-dev:customizedUser \

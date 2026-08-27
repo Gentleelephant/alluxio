@@ -9,7 +9,7 @@
 # See the NOTICE file distributed with this work for information regarding copyright ownership.
 #
 
-ARG ALLUXIO_BASE_IMAGE
+ARG ALLUXIO_BASE_IMAGE=registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio-dev:2.9.0-fix.1@sha256:3e25badf61048ab43956ddc31758b171e3bbe8f02bd9d5cb78d25c71ba08dfd6
 FROM ${ALLUXIO_BASE_IMAGE}
 
 ARG TARGETARCH
@@ -21,6 +21,7 @@ USER root
 # intact and only replace architecture-sensitive native artifacts.
 COPY integration/jnifuse/native/src/main/native/libjnifuse /tmp/jnifuse-src
 COPY integration/docker/scripts/install-jni-fuse-libs.sh /usr/local/bin/install-jni-fuse-libs
+COPY integration/docker/tests/LoadJnifuse.java /tmp/LoadJnifuse.java
 
 RUN set -eux; \
     mkdir -p /tmp/jnifuse-out; \
@@ -73,5 +74,50 @@ RUN set -eux; \
       /opt/async-profiler; \
     test -x /opt/async-profiler/profiler.sh; \
     rm -f /tmp/async-profiler.tar.gz
+
+# Build-time self-test. Buildx executes this once per requested platform, so a broken native
+# component prevents the multi-architecture image from being published.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) EXPECTED_UNAME=x86_64; EXPECTED_MACHINE=3e00 ;; \
+      arm64) EXPECTED_UNAME=aarch64; EXPECTED_MACHINE=b700 ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    test "$(uname -m)" = "${EXPECTED_UNAME}"; \
+    for tool in java javac jar gcc g++ make cmake git unzip vim wget pkg-config; do \
+      command -v "${tool}" >/dev/null; \
+    done; \
+    test -f /opt/arthas/arthas-boot.jar; \
+    test -x /usr/lib/jvm/java-11-openjdk/bin/java; \
+    test -x /opt/async-profiler/profiler.sh; \
+    /opt/alluxio/bin/alluxio version >/dev/null; \
+    FUSE_JAR="$(find /opt/alluxio/integration/fuse -maxdepth 1 \
+      -name 'alluxio-fuse-*.jar' -print -quit)"; \
+    test -n "${FUSE_JAR}"; \
+    mkdir -p /tmp/jar-check /tmp/empty-library-path /tmp/loader-classes; \
+    cd /tmp/jar-check; \
+    jar xf "${FUSE_JAR}" libjnifuse.so libjnifuse3.so; \
+    for library in libjnifuse.so libjnifuse3.so; do \
+      test "$(jar tf "${FUSE_JAR}" | grep -c "^${library}$")" = 1; \
+      test "$(od -An -tx1 -j18 -N2 "${library}" | tr -d ' \n')" = "${EXPECTED_MACHINE}"; \
+      cmp "${library}" "/usr/local/lib/${library}"; \
+      ! ldd "/usr/local/lib/${library}" | grep -q 'not found'; \
+    done; \
+    for binary in /usr/local/bin/tini /usr/local/bin/alluxio-csi \
+      /opt/async-profiler/build/libasyncProfiler.so \
+      /opt/async-profiler/build/jattach /opt/async-profiler/build/fdtransfer; do \
+      test "$(od -An -tx1 -j18 -N2 "${binary}" | tr -d ' \n')" = "${EXPECTED_MACHINE}"; \
+    done; \
+    javac -cp "${FUSE_JAR}" -d /tmp/loader-classes /tmp/LoadJnifuse.java; \
+    java -Djava.library.path=/tmp/empty-library-path \
+      -cp "${FUSE_JAR}:/tmp/loader-classes" LoadJnifuse 2; \
+    java -Djava.library.path=/tmp/empty-library-path \
+      -cp "${FUSE_JAR}:/tmp/loader-classes" LoadJnifuse 3; \
+    java -Djava.library.path=/usr/local/lib \
+      -cp "${FUSE_JAR}:/tmp/loader-classes" LoadJnifuse 2; \
+    java -Djava.library.path=/usr/local/lib \
+      -cp "${FUSE_JAR}:/tmp/loader-classes" LoadJnifuse 3; \
+    rm -rf /tmp/jar-check /tmp/empty-library-path /tmp/loader-classes; \
+    rm -f /tmp/LoadJnifuse.java
 
 USER ${ALLUXIO_DEV_UID}
