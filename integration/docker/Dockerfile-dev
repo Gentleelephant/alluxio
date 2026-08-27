@@ -9,50 +9,69 @@
 # See the NOTICE file distributed with this work for information regarding copyright ownership.
 #
 
-FROM registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio:2025-11-19-10-45-15
+ARG ALLUXIO_BASE_IMAGE
+FROM ${ALLUXIO_BASE_IMAGE}
+
+ARG TARGETARCH
 
 USER root
 
-RUN sed -i 's|mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-* \
-    && sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-* \
-    && yum clean all && yum makecache
+# The alluxio-dev base image already contains both JDKs, the complete development toolchain,
+# Arthas, libfuse headers, and the historical async-profiler installation. Keep that contract
+# intact and only replace architecture-sensitive native artifacts.
+COPY integration/jnifuse/native/src/main/native/libjnifuse /tmp/jnifuse-src
+COPY integration/docker/scripts/install-jni-fuse-libs.sh /usr/local/bin/install-jni-fuse-libs
 
+RUN set -eux; \
+    mkdir -p /tmp/jnifuse-out; \
+    make -f /tmp/jnifuse-src/Makefile \
+      SRC_DIR=/tmp/jnifuse-src \
+      OUTPUT_DIR=/tmp/jnifuse-out; \
+    FUSE_JAR="$(find /opt/alluxio/integration/fuse -maxdepth 1 \
+      -name 'alluxio-fuse-*.jar' -print -quit)"; \
+    test -n "${FUSE_JAR}"; \
+    chmod +x /usr/local/bin/install-jni-fuse-libs; \
+    /usr/local/bin/install-jni-fuse-libs \
+      "${TARGETARCH}" /tmp/jnifuse-out "${FUSE_JAR}" /usr/local/lib; \
+    ldconfig; \
+    ! ldd /usr/local/lib/libjnifuse.so | grep -q 'not found'; \
+    ! ldd /usr/local/lib/libjnifuse3.so | grep -q 'not found'; \
+    rm -rf /tmp/jnifuse-src /tmp/jnifuse-out; \
+    rm -f /usr/local/bin/install-jni-fuse-libs
 
-RUN \
-    yum update -y && yum upgrade -y && \
-    yum install -y java-11-openjdk-devel java-11-openjdk && \
-    yum install -y ca-certificates pkgconfig wget udev git gcc gcc-c++ make cmake gettext-devel libtool autoconf unzip vim fuse-devel fuse3-devel && \
-    yum clean all
+# Replace the historical x86-only tini without changing the entrypoint or its path.
+ARG TINI_VERSION=v0.18.0
+ARG TINI_DOWNLOAD_BASE=https://github.com/krallin/tini/releases/download
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) EXPECTED_MACHINE=3e00; TINI_SHA256=eadb9d6e2dc960655481d78a92d2c8bc021861045987ccd3e27c7eae5af0cf33 ;; \
+      arm64) EXPECTED_MACHINE=b700; TINI_SHA256=ce3f642d73d58d7c8d745e65b5a9b5de7040fbfa1f7bee2f6207bb28207d8ca1 ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    wget -qO /tmp/tini \
+      "${TINI_DOWNLOAD_BASE}/${TINI_VERSION}/tini-static-${TARGETARCH}"; \
+    echo "${TINI_SHA256}  /tmp/tini" | sha256sum -c -; \
+    test "$(od -An -tx1 -j18 -N2 /tmp/tini | tr -d ' \n')" = "${EXPECTED_MACHINE}"; \
+    chmod 755 /tmp/tini; \
+    mv /tmp/tini /usr/local/bin/tini
 
-# Compile JNI FUSE native libraries from source for multi-arch support
-RUN if [ -d /opt/alluxio/integration/jnifuse/native/src/main/native/libjnifuse ]; then \
-        cd /opt/alluxio/integration/jnifuse/native/src/main/native/libjnifuse && \
-        make OUTPUT_DIR=/tmp/jnifuse && \
-        cp /tmp/jnifuse/libjnifuse.so /opt/alluxio/lib/ 2>/dev/null || true && \
-        cp /tmp/jnifuse/libjnifuse3.so /opt/alluxio/lib/ 2>/dev/null || true && \
-        cp /tmp/jnifuse/libjnifuse.so /opt/alluxio/integration/jnifuse/native/src/main/resources/ 2>/dev/null || true && \
-        cp /tmp/jnifuse/libjnifuse3.so /opt/alluxio/integration/jnifuse/native/src/main/resources/ 2>/dev/null || true && \
-        rm -rf /tmp/jnifuse; \
-    fi
-
-# Create a symlink for setting JAVA_HOME depending on java version. ENV cannot be set conditionally.
-RUN ln -s /usr/lib/jvm/java-1.8.0-openjdk /usr/lib/jvm/java-8-openjdk
-ARG JAVA_VERSION=8
-ENV JAVA_HOME /usr/lib/jvm/java-${JAVA_VERSION}-openjdk
-
-# Disable JVM DNS cache in java11 (https://github.com/Alluxio/alluxio/pull/9452)
-RUN echo "networkaddress.cache.ttl=0" >> /usr/lib/jvm/java-11-openjdk/conf/security/java.security
-
-# Install arthas(https://github.com/alibaba/arthas) for analyzing performance bottleneck
-RUN wget -qO /tmp/arthas.zip "https://github.com/alibaba/arthas/releases/download/arthas-all-3.4.6/arthas-bin.zip" && \
-    mkdir -p /opt/arthas && \
-    unzip /tmp/arthas.zip -d /opt/arthas && \
-    rm /tmp/arthas.zip
-
-# Install async-profiler(https://github.com/jvm-profiling-tools/async-profiler/releases/tag/v1.8.3)
-RUN wget -qO /tmp/async-profiler-1.8.3-linux-x64.tar.gz "https://github.com/jvm-profiling-tools/async-profiler/releases/download/v1.8.3/async-profiler-1.8.3-linux-x64.tar.gz" && \
-    tar -xvf /tmp/async-profiler-1.8.3-linux-x64.tar.gz -C /opt && \
-    mv /opt/async-profiler-* /opt/async-profiler && \
-    rm /tmp/async-profiler-1.8.3-linux-x64.tar.gz
+# async-profiler 2.9 keeps the historical profiler.sh interface and publishes x64 and arm64 builds.
+ARG ASYNC_PROFILER_VERSION=2.9
+ARG ASYNC_PROFILER_DOWNLOAD_BASE=https://github.com/async-profiler/async-profiler/releases/download
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) ASYNC_PROFILER_ARCH=x64; ASYNC_PROFILER_SHA256=b9a094bc480f233f72141b7793c098800054438e0e6cfe5b7f2fe13ef4ad11f0 ;; \
+      arm64) ASYNC_PROFILER_ARCH=arm64; ASYNC_PROFILER_SHA256=00c91439b2fc95fa518e47570c451d92c8670c0cd68d908ee53397bb35a42779 ;; \
+      *) echo "Unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    wget -qO /tmp/async-profiler.tar.gz \
+      "${ASYNC_PROFILER_DOWNLOAD_BASE}/v${ASYNC_PROFILER_VERSION}/async-profiler-${ASYNC_PROFILER_VERSION}-linux-${ASYNC_PROFILER_ARCH}.tar.gz"; \
+    echo "${ASYNC_PROFILER_SHA256}  /tmp/async-profiler.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/async-profiler.tar.gz -C /tmp; \
+    rm -rf /opt/async-profiler; \
+    mv "/tmp/async-profiler-${ASYNC_PROFILER_VERSION}-linux-${ASYNC_PROFILER_ARCH}" \
+      /opt/async-profiler; \
+    test -x /opt/async-profiler/profiler.sh; \
+    rm -f /tmp/async-profiler.tar.gz
 
 USER ${ALLUXIO_DEV_UID}

@@ -2,15 +2,18 @@
 To build your Alluxio Docker image, a Docker 19.03+ is required. 
 
 ## Building docker image for production
-To build the Alluxio Docker image from the default remote url, run
+Run Docker builds from the repository root so the architecture-specific JNI FUSE sources are
+available to the Docker build context. To build the Alluxio production image from the default
+remote tarball, run
 ```console
-$ docker build -t alluxio/alluxio .
+$ docker build -t alluxio/alluxio -f integration/docker/Dockerfile --target final .
 ```
 
 To build with a local Alluxio tarball, specify the `ALLUXIO_TARBALL` build argument
 
 ```console
-$ docker build -t alluxio/alluxio --build-arg ALLUXIO_TARBALL=alluxio-${version}.tar.gz .
+$ docker build -t alluxio/alluxio -f integration/docker/Dockerfile --target final \
+  --build-arg ALLUXIO_TARBALL=alluxio-${version}.tar.gz .
 ```
 
 Starting from v2.6.0, alluxio-fuse image is deprecated. It is embedded in `alluxio/alluxio` image.
@@ -21,25 +24,95 @@ Docker image that only installs packages needed for Alluxio service to run, this
 more development tools, including gcc, make, async-profiler, etc., making it easier to deploy more 
 services along with Alluxio.
 
-To build the development image from the default remote url, run
+The development image is a target of the same Dockerfile as the production image. This guarantees
+that master, worker, CSI, and FUSE use the same architecture-correct runtime while retaining Java
+8/11, GCC/G++, Make, CMake, Git, Vim, Arthas, and async-profiler. To build it, run
 ```console
-$ docker build -t alluxio/alluxio-dev -f Dockerfile-dev .
+$ docker build -t alluxio/alluxio-dev -f integration/docker/Dockerfile --target dev .
 ```
 
 To build with a local Alluxio tarball, specify the `ALLUXIO_TARBALL` build argument
 
 ```console
-$ docker build -t alluxio/alluxio-dev -f Dockerfile-dev \
---build-arg ALLUXIO_TARBALL=alluxio-${version}.tar.gz .
+$ docker build -t alluxio/alluxio-dev -f integration/docker/Dockerfile --target dev \
+  --build-arg ALLUXIO_TARBALL=alluxio-${version}.tar.gz .
 ```
 
 Development image also has Java11 installed. To run Alluxio with Java11, build development image 
 with the `JAVA_VERSION` build argument specified.
 
 ```console
-$ docker build -t alluxio/alluxio-dev -f Dockerfile-dev \
---build-arg ALLUXIO_TARBALL=alluxio-${version}.tar.gz \
---build-arg JAVA_VERSION=11 .
+$ docker build -t alluxio/alluxio-dev -f integration/docker/Dockerfile --target dev \
+  --build-arg ALLUXIO_TARBALL=alluxio-${version}.tar.gz \
+  --build-arg JAVA_VERSION=11 .
+```
+
+To publish one tag for both supported CPU architectures, use Buildx. BuildKit executes the JNI
+FUSE compilation independently in each target platform and publishes a manifest list containing
+the two resulting images.
+
+```console
+$ docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -f integration/docker/Dockerfile \
+  --target dev \
+  -t registry.example.com/alluxio/alluxio-dev:${version} \
+  --push .
+```
+
+After publishing, verify the manifest, development tools, native binaries, JAR fallback, and
+external JNI loading on both platforms:
+
+```console
+$ integration/docker/tests/verify-multiarch-dev-image.sh \
+  registry.example.com/alluxio/alluxio-dev:${version}
+```
+
+If an existing customized `alluxio-dev` image already contains required internal tools or
+configuration, use `Dockerfile-dev` to preserve its packages, Java selection, Arthas, entrypoint,
+user, and Alluxio files. This compatibility build replaces only the architecture-bound JNI FUSE
+libraries, the copies embedded in the FUSE JAR, tini, and async-profiler. The base image must
+already publish both platforms, and its CSI binary must already match each platform; the verifier
+below rejects the result otherwise.
+
+```console
+$ docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -f integration/docker/Dockerfile-dev \
+  --build-arg ALLUXIO_BASE_IMAGE=registry.example.com/alluxio/alluxio-dev:${old-version} \
+  -t registry.example.com/alluxio/alluxio-dev:${new-version} \
+  --push .
+```
+
+For the current customized image, run the build from the repository root:
+
+```console
+$ docker buildx create --name alluxio-multiarch --driver docker-container --use
+$ docker buildx inspect --bootstrap
+$ docker login registry.cn-hangzhou.aliyuncs.com
+$ docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -f integration/docker/Dockerfile-dev \
+  --build-arg ALLUXIO_BASE_IMAGE=registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio-dev:2.9.0-fix.1 \
+  -t registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio-dev:2.9.0-fix.2 \
+  --push .
+$ integration/docker/tests/verify-multiarch-dev-image.sh \
+  registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio-dev:2.9.0-fix.2
+```
+
+The two download base URLs can be redirected to an internal mirror when the builder cannot access
+GitHub. Preserve the upstream directory layout (`v0.18.0/...` and `v2.9/...`); SHA-256 and ELF
+architecture checks still run during the build.
+
+```console
+$ docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -f integration/docker/Dockerfile-dev \
+  --build-arg ALLUXIO_BASE_IMAGE=registry.example.com/alluxio/alluxio-dev:${old-version} \
+  --build-arg TINI_DOWNLOAD_BASE=https://mirror.example.com/tini \
+  --build-arg ASYNC_PROFILER_DOWNLOAD_BASE=https://mirror.example.com/async-profiler \
+  -t registry.example.com/alluxio/alluxio-dev:${new-version} \
+  --push .
 ```
 
 To use a customized user/group to launch Alluxio inside containers, build the Dockerfile
@@ -48,23 +121,19 @@ if you want to use user `alluxio2` with uid `1001` and group `alluxio2` with gid
 
 ```console
 $ docker build -t alluxio/alluxio:customizedUser \
---build-arg ALLUXIO_USERNAME=alluxio2 --build-arg ALLUXIO_UID=1001 \
---build-arg ALLUXIO_GROUP=alluxio2 --build-arg ALLUXIO_GID=1001 .
+  -f integration/docker/Dockerfile --target final \
+  --build-arg ALLUXIO_USERNAME=alluxio2 --build-arg ALLUXIO_UID=1001 \
+  --build-arg ALLUXIO_GROUP=alluxio2 --build-arg ALLUXIO_GID=1001 .
 ```
 
-To use a customized user/group in the development image,
-you need to first build the base image with the customized user/group, 
-modify `Dockerfile-dev` to make it based on your base image, and build your dev image.
-For example, if you already build the `alluxio/alluxio:customizedUser` image, modify `Dockerfile-dev` to 
-
-```
-FROM alluxio/alluxio:customizedUser
-```
-
-and run
+Use the same arguments with the `dev` target to create a development image with a customized
+user. The compatibility `Dockerfile-dev` requires `ALLUXIO_BASE_IMAGE` explicitly.
 
 ```console
-$ docker build -t alluxio/alluxio-dev:customizedUser -f Dockerfile-dev .
+$ docker build -t alluxio/alluxio-dev:customizedUser \
+  -f integration/docker/Dockerfile --target dev \
+  --build-arg ALLUXIO_USERNAME=alluxio2 --build-arg ALLUXIO_UID=1001 \
+  --build-arg ALLUXIO_GROUP=alluxio2 --build-arg ALLUXIO_GID=1001 .
 ```
 
 ## Running docker image
