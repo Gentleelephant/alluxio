@@ -13,7 +13,56 @@
 #include "jnifuse_jvm.h"
 #include "operation.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+
 namespace jnifuse {
+
+#if defined(__linux__) && defined(__aarch64__)
+// jnr-fuse 0.5.5 models the Linux 64-bit struct stat using the x86_64 glibc layout.
+// AArch64 glibc places st_mode before st_nlink and uses a smaller struct, so exposing the
+// native AArch64 buffer directly to Java corrupts the attributes returned to the kernel.
+struct JnrFuseFileStat {
+  uint64_t dev;
+  uint64_t ino;
+  uint64_t nlink;
+  uint32_t mode;
+  uint32_t uid;
+  uint32_t gid;
+  uint32_t padding;
+  uint64_t rdev;
+  int64_t size;
+  int64_t blksize;
+  int64_t blocks;
+  struct timespec atim;
+  struct timespec mtim;
+  struct timespec ctim;
+  int64_t unused[3];
+};
+
+static_assert(sizeof(JnrFuseFileStat) == 144, "Unexpected JNR FileStat size");
+static_assert(offsetof(JnrFuseFileStat, nlink) == 16, "Unexpected JNR st_nlink offset");
+static_assert(offsetof(JnrFuseFileStat, mode) == 24, "Unexpected JNR st_mode offset");
+static_assert(offsetof(JnrFuseFileStat, atim) == 72, "Unexpected JNR st_atim offset");
+
+static void CopyJnrFileStatToNative(const JnrFuseFileStat &source, struct stat *target) {
+  std::memset(target, 0, sizeof(*target));
+  target->st_dev = source.dev;
+  target->st_ino = source.ino;
+  target->st_nlink = source.nlink;
+  target->st_mode = source.mode;
+  target->st_uid = source.uid;
+  target->st_gid = source.gid;
+  target->st_rdev = source.rdev;
+  target->st_size = source.size;
+  target->st_blksize = source.blksize;
+  target->st_blocks = source.blocks;
+  target->st_atim = source.atim;
+  target->st_mtim = source.mtim;
+  target->st_ctim = source.ctim;
+}
+#endif
 
 Operation::Operation() {
   this->fs = nullptr;
@@ -37,9 +86,20 @@ GetattrOperation::GetattrOperation(JniFuseFileSystem *fs) {
 int GetattrOperation::call(const char *path, struct stat *stbuf) {
   JNIEnv *env = AttachCurrentThreadIfNeeded();
   jstring jspath = env->NewStringUTF(path);
+#if defined(__linux__) && defined(__aarch64__)
+  JnrFuseFileStat jnrStat = {};
+  jobject buffer = env->NewDirectByteBuffer(&jnrStat, sizeof(jnrStat));
+#else
   jobject buffer = env->NewDirectByteBuffer((void *)stbuf, sizeof(struct stat));
+#endif
 
   int ret = env->CallIntMethod(this->obj, this->methodID, jspath, buffer);
+
+#if defined(__linux__) && defined(__aarch64__)
+  if (ret == 0) {
+    CopyJnrFileStatToNative(jnrStat, stbuf);
+  }
+#endif
 
   env->DeleteLocalRef(jspath);
   env->DeleteLocalRef(buffer);

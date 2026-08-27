@@ -42,6 +42,19 @@ $ docker buildx build \
 For an optional post-publication audit of the manifest and both runnable images, use
 `integration/docker/tests/verify-multiarch-dev-image.sh <image>`.
 
+Loading a JNI library does not prove that it can exchange filesystem attributes with the host
+kernel. Run the privileged StackFS check on a native host for each architecture before publishing:
+
+```console
+$ integration/docker/tests/verify-jni-fuse-mount.sh \
+    <image> linux/amd64 x86_64 3
+$ integration/docker/tests/verify-jni-fuse-mount.sh \
+    <image> linux/arm64 aarch64 3
+```
+
+The multi-architecture workflow runs these checks on native `ubuntu-24.04` and
+`ubuntu-24.04-arm` runners before the manifest build is allowed to publish.
+
 The default base is pinned to the tested multi-architecture `2.9.0-fix.1` manifest. Override it
 only when intentionally rebasing the compatibility image:
 
