@@ -38,8 +38,9 @@ public class Fuse3FuseFileInfo extends FuseFileInfo {
 
     this.flags = new Signed32();
     new Padding(NativeType.UCHAR, 8); // unused flags and paddings
-    this.fh = new u_int64_t();
-    new u_int64_t(); // lock_owner
-    new u_int32_t(); // poll_events
+    this.fh = new Unsigned64();
+    new Unsigned64(); // lock_owner
+    new Unsigned32(); // poll_events
+    new Padding(NativeType.UCHAR, 4); // trailing native struct padding
   }
 }

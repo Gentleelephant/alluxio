@@ -19,6 +19,28 @@
 
 namespace jnifuse {
 
+#if defined(__linux__)
+// The Java FuseFileInfo views below rely on the libfuse layouts shipped in the image. Fail the
+// native build instead of publishing a mount that silently corrupts file handles when headers
+// change.
+static_assert(sizeof(struct fuse_file_info) == 40, "Unexpected fuse_file_info size");
+static_assert(offsetof(struct fuse_file_info, flags) == 0,
+              "Unexpected fuse_file_info flags offset");
+#if FUSE_USE_VERSION >= 30
+static_assert(offsetof(struct fuse_file_info, fh) == 16,
+              "Unexpected FUSE3 fuse_file_info fh offset");
+static_assert(offsetof(struct fuse_file_info, lock_owner) == 24,
+              "Unexpected FUSE3 fuse_file_info lock_owner offset");
+static_assert(offsetof(struct fuse_file_info, poll_events) == 32,
+              "Unexpected FUSE3 fuse_file_info poll_events offset");
+#else
+static_assert(offsetof(struct fuse_file_info, fh) == 24,
+              "Unexpected FUSE2 fuse_file_info fh offset");
+static_assert(offsetof(struct fuse_file_info, lock_owner) == 32,
+              "Unexpected FUSE2 fuse_file_info lock_owner offset");
+#endif
+#endif
+
 #if defined(__linux__) && defined(__aarch64__)
 // jnr-fuse 0.5.5 models the Linux 64-bit struct stat using the x86_64 glibc layout.
 // AArch64 glibc places st_mode before st_nlink and uses a smaller struct, so exposing the

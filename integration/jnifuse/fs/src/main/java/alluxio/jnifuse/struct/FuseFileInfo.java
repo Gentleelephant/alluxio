@@ -22,7 +22,7 @@ import java.nio.ByteOrder;
 public class FuseFileInfo extends Struct {
   public ByteBuffer buffer;
 
-  public u_int64_t fh;
+  public Unsigned64 fh;
   public Signed32 flags;
 
   public FuseFileInfo(Runtime runtime, ByteBuffer buffer) {

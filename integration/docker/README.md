@@ -35,7 +35,7 @@ Run the build from the repository root. No build arguments or separate verificat
 $ docker buildx build \
   --platform linux/amd64,linux/arm64 \
   -f integration/docker/Dockerfile-dev \
-  -t registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio-dev:2.9.0-fix.2 \
+  -t registry.cn-hangzhou.aliyuncs.com/birdhk/alluxio-dev:2.9.0-fix.4 \
   --push .
 ```
 
@@ -50,10 +50,14 @@ $ integration/docker/tests/verify-jni-fuse-mount.sh \
     <image> linux/amd64 x86_64 3
 $ integration/docker/tests/verify-jni-fuse-mount.sh \
     <image> linux/arm64 aarch64 3
+$ integration/docker/tests/verify-alluxio-fuse-mount.sh \
+    <image> linux/arm64 aarch64 3
 ```
 
 The multi-architecture workflow runs these checks on native `ubuntu-24.04` and
-`ubuntu-24.04-arm` runners before the manifest build is allowed to publish.
+`ubuntu-24.04-arm` runners before the manifest build is allowed to publish. It also starts a real
+Alluxio master, worker, and FUSE client and verifies repeated file opens and SHA-256 reads through
+`AlluxioJniFuseFileSystem`; StackFS alone does not exercise the `FuseFileInfo.fh` data path.
 
 The default base is pinned to the tested multi-architecture `2.9.0-fix.1` manifest. Override it
 only when intentionally rebasing the compatibility image:

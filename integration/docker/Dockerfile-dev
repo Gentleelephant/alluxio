@@ -18,10 +18,17 @@ USER root
 
 # The alluxio-dev base image already contains both JDKs, the complete development toolchain,
 # Arthas, libfuse headers, and the historical async-profiler installation. Keep that contract
-# intact and only replace architecture-sensitive native artifacts.
+# intact and only replace architecture-sensitive JNI artifacts and their Java struct views.
 COPY integration/jnifuse/native/src/main/native/libjnifuse /tmp/jnifuse-src
+COPY integration/jnifuse/fs/src/main/java/alluxio/jnifuse/struct/FuseFileInfo.java \
+     integration/jnifuse/fs/src/main/java/alluxio/jnifuse/struct/Fuse2FuseFileInfo.java \
+     integration/jnifuse/fs/src/main/java/alluxio/jnifuse/struct/Fuse3FuseFileInfo.java \
+     /tmp/jnifuse-java-src/alluxio/jnifuse/struct/
+COPY integration/fuse/src/main/java/alluxio/fuse/AlluxioJniFuseFileSystem.java \
+     /tmp/jnifuse-java-src/alluxio/fuse/AlluxioJniFuseFileSystem.java
 COPY integration/docker/scripts/install-jni-fuse-libs.sh /usr/local/bin/install-jni-fuse-libs
 COPY integration/docker/tests/LoadJnifuse.java /tmp/LoadJnifuse.java
+COPY integration/docker/tests/FuseFileInfoLayoutTest.java /tmp/FuseFileInfoLayoutTest.java
 
 RUN set -eux; \
     mkdir -p /tmp/jnifuse-out; \
@@ -34,10 +41,24 @@ RUN set -eux; \
     chmod +x /usr/local/bin/install-jni-fuse-libs; \
     /usr/local/bin/install-jni-fuse-libs \
       "${TARGETARCH}" /tmp/jnifuse-out "${FUSE_JAR}" /usr/local/lib; \
+    mkdir -p /tmp/jnifuse-java-classes /tmp/jnifuse-test-classes; \
+    javac -cp "${FUSE_JAR}" -d /tmp/jnifuse-java-classes \
+      /tmp/jnifuse-java-src/alluxio/jnifuse/struct/FuseFileInfo.java \
+      /tmp/jnifuse-java-src/alluxio/jnifuse/struct/Fuse2FuseFileInfo.java \
+      /tmp/jnifuse-java-src/alluxio/jnifuse/struct/Fuse3FuseFileInfo.java \
+      /tmp/jnifuse-java-src/alluxio/fuse/AlluxioJniFuseFileSystem.java; \
+    jar uf "${FUSE_JAR}" \
+      -C /tmp/jnifuse-java-classes alluxio/jnifuse/struct \
+      -C /tmp/jnifuse-java-classes alluxio/fuse/AlluxioJniFuseFileSystem.class; \
+    javac -cp "${FUSE_JAR}" -d /tmp/jnifuse-test-classes /tmp/FuseFileInfoLayoutTest.java; \
+    java -cp "${FUSE_JAR}:/tmp/jnifuse-test-classes" \
+      alluxio.jnifuse.struct.FuseFileInfoLayoutTest; \
     ldconfig; \
     ! ldd /usr/local/lib/libjnifuse.so | grep -q 'not found'; \
     ! ldd /usr/local/lib/libjnifuse3.so | grep -q 'not found'; \
-    rm -rf /tmp/jnifuse-src /tmp/jnifuse-out; \
+    rm -rf /tmp/jnifuse-src /tmp/jnifuse-out /tmp/jnifuse-java-src \
+      /tmp/jnifuse-java-classes /tmp/jnifuse-test-classes; \
+    rm -f /tmp/FuseFileInfoLayoutTest.java; \
     rm -f /usr/local/bin/install-jni-fuse-libs
 
 # Replace the historical x86-only tini without changing the entrypoint or its path.

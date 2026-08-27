@@ -39,7 +39,7 @@ public class Fuse2FuseFileInfo extends FuseFileInfo {
     this.flags = new Signed32();
     new UnsignedLong(); // fh_old
     new Padding(NativeType.UCHAR, 4); // unused flags and paddings
-    this.fh = new u_int64_t();
-    new u_int64_t(); // lock_owner
+    this.fh = new Unsigned64();
+    new Unsigned64(); // lock_owner
   }
 }
